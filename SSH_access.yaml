@@ -1,0 +1,74 @@
+---
+- name: Framework Container Deployment
+  hosts: all
+  become: yes
+  vars:
+    userid: 2001
+    groupid: 2001
+    username: 'automation_user'
+    groupname: 'automation_user'
+    homedir: '/home/{{ username }}'
+    sshpubkey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCqqHub1F8hP3TVVe2ZG0fgA7fOTy7JF5gfnz76jut52ES0XA+XhKsM1nR/yUVG/MddyokcM7jeRC+N9pCsH70Zm6dNAXoKN76eysFVMKNOBXH85l2MBuWcG+ovC2Nqh7axrNKWuKhnxyaheR36z7fS9aMR6xKv8M7r94byIDvpEaRNUeykgqn9i7JBsWuJUju76MnDo3K36wnw8MabmshA3IK+huicqnEeYFwHoSpDlu8Md2oaZUvPDcflm8zDAe7dRgjgCHES3k95Yb2f0VwG62UYBCU+anmyKeAZqT2SX8kFu+9mJHo/iny4O6XjtawNMfNOhYeQ3PBBqVY3koxGmAPEi2uJZxoQhaYz27SQNrK6xNNbQO/VCpHv7OgouCxiCTPxTtivAhIBiAPlZI7ZsllC2/u/ORcUY9A8k2iFRs7Y++omHSmSQNudSR2GmxjyFC5AG2lqyac+uF79TpR0PbyNHPi8Rvtqti96u1ngSwypaxLh4nPZZuYS+WbgBVE= deploy@deploytest2'
+#    sudoer_line: '{{ username }} ALL=(ALL) NOPASSWD: ALL'
+    sudoer_line: '{{ username }} ALL=(ALL:ALL) NOPASSWD: ALL'
+
+  tasks:
+    - name: Create Group {{ groupname }} with GroupID {{ groupid }}
+      # Creates first a group automation_user
+      group:
+        name: '{{ groupname }}'
+        gid: '{{ groupid }}'
+        state: present
+
+    - name: Create User {{ username }} with UserID {{ userid }}
+      # Now create a user account and lock it for password login
+      user:
+        name: '{{ username }}'
+        uid: '{{ userid }}'
+        group: '{{ groupname }}'
+        home: '{{ homedir }}'
+        create_home: yes
+        password_lock: yes
+        shell: /bin/bash
+        comment: 'Check automated user'
+        state: present
+
+    - name: Set password-aging for User {{ username }} to 99999 because the user is locked for password-login
+      # Now create a user account and lock it for password login
+      command: chage -M 99999 {{ username }}
+
+    - name: Changing mode of dir {{ homedir }} to 0700
+      # Safely change the mode of the homedir
+      file:
+        path: '{{ homedir }}'
+        state: directory
+        mode: '0700'
+        setype: user_home_dir_t
+
+    - name: Creating ssh subdir under {{ homedir }}
+      # Create the .ssh subdir and set SE rights to ssh home t for use with ssh-keys
+      file:
+        path: '{{ homedir }}/.ssh'
+        state: directory
+        mode: '0700'
+        owner: '{{ username }}'
+        group: '{{ groupname }}'
+        setype: ssh_home_t
+
+    - name: Modifying .ssh/authorized_keys file under {{ homedir }}
+      # Add the ssh pubkey for automation_user to authorized_keys
+      lineinfile:
+        line: '{{ sshpubkey }}'
+        path: '{{ homedir }}/.ssh/authorized_keys'
+        create: yes
+        owner: '{{ username }}'
+        mode: '0600'
+        group: '{{ groupname }}'
+        setype: ssh_home_t
+
+    - name: Add sudoers entry with all permissions
+      # Add the sudoers entry with all the permissions
+      lineinfile:
+        line: '{{ sudoer_line }}'
+        dest: /etc/sudoers
+        insertafter: EOF
