@@ -1,0 +1,96 @@
+---
+- name: Pull and run Docker images from private repository
+  hosts: all
+  become: yes
+  remote_user: automation_user
+  vars_files:
+    - docker_vault.yml
+
+  tasks:
+    - name: Install required packages
+      package:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker APT repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Update APT package cache
+      apt:
+        update_cache: yes
+
+    - name: Install Docker
+      ansible.builtin.package:
+        name: docker-ce
+        state: latest
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        append: yes
+        groups: docker
+      when: ansible_os_family == 'Debian' or ansible_os_family == 'RedHat'
+
+    - name: Ensure /etc/docker directory exists
+      file:
+        path: /etc/docker
+        state: directory
+      become: true
+
+    - name: Add DNS server entry to /etc/resolv.conf
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver 10.254.4.10"
+        state: present
+
+    - name: Add Docker daemon configuration to /etc/docker/daemon.json
+      lineinfile:
+        path: /etc/docker/daemon.json
+        line: |
+          {
+            "insecure-registries":["10.254.16.15:8082"],
+            "exec-opts": ["native.cgroupdriver=cgroupfs"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m"
+            },
+            "storage-driver": "overlay2"
+          }
+    - name: Restart Docker service
+      service:
+        name: docker
+        state: restarted
+
+    - name: Set Docker login credentials
+      docker_login:
+        registry_url: "http://10.254.16.15:8082"
+        username: "{{ docker_registry_username }}"
+        password: "{{ docker_registry_password }}"
+
+    - name: Pull frontend container
+      shell: docker pull 10.254.16.15:8082/frontend:latest
+
+    - name: Run frontend container
+      shell: docker run -d --name frontend -p 7000:80 10.254.16.15:8082/frontend:latest
+
+    - name: Pull middleware container
+      shell: docker pull 10.254.16.15:8082/middleware:latest
+
+    - name: Run middleware container
+      shell: docker run -d --name middleware -p 9001:8057 10.254.16.15:8082/middleware:latest
